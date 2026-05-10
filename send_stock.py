@@ -30,10 +30,11 @@ MARKET = {
 
 
 
-def fetch_top_buyers(investor_name: str, market_name: str, top_n: int = 10) -> pd.DataFrame:
+def fetch_top(investor_name: str, market_name: str, side: str, top_n: int = 10) -> list:
+    """side: 'buy' 또는 'sell'"""
     gubun = INVESTOR[investor_name]
     sosok = MARKET[market_name]
-    url = f"{IFRAME_URL}?sosok={sosok}&investor_gubun={gubun}&type=buy"
+    url = f"{IFRAME_URL}?sosok={sosok}&investor_gubun={gubun}&type={side}"
     res = requests.get(url, headers=NAVER_HEADERS, timeout=15)
     tables = pd.read_html(StringIO(res.text), encoding="utf-8")
 
@@ -43,33 +44,31 @@ def fetch_top_buyers(investor_name: str, market_name: str, top_n: int = 10) -> p
             df = t
             break
     if df is None:
-        return pd.DataFrame()
+        return []
 
     df = df.dropna(subset=["종목명"])
     df = df[df["종목명"].str.strip() != ""]
-    df["market"] = market_name
-    return df.head(top_n)
+    rows = []
+    for _, row in df.head(top_n).iterrows():
+        rows.append((row["종목명"], market_name, row["수량"], row["금액"] / 100))
+    return rows
 
 
 def build_message(date_str: str) -> str:
-    lines = [f"고래 매수 현황 ({date_str})", ""]
+    lines = [f"고래 매매 현황 ({date_str})", ""]
 
     for investor in ("기관", "외국인"):
-        emoji = "기관" if investor == "기관" else "외국인"
-        lines.append(f"[{emoji} 순매수 TOP 10]")
+        lines.append(f"[{investor}]")
 
-        rows_all = []
-        for market in ("KOSPI", "KOSDAQ"):
-            df = fetch_top_buyers(investor, market)
-            if not df.empty:
-                for _, row in df.iterrows():
-                    amount_bil = row["금액"] / 100  # 백만원 -> 억원
-                    rows_all.append((row["종목명"], market, row["수량"], amount_bil))
+        for side, label in (("buy", "▲ 순매수 TOP 5"), ("sell", "▼ 순매도 TOP 5")):
+            rows_all = []
+            for market in ("KOSPI", "KOSDAQ"):
+                rows_all.extend(fetch_top(investor, market, side, top_n=10))
 
-        # 금액 기준 정렬 후 TOP 10
-        rows_all.sort(key=lambda x: x[3], reverse=True)
-        for i, (name, mkt, qty, bil) in enumerate(rows_all[:10], 1):
-            lines.append(f"  {i}. [{mkt}] {name}  {qty:.0f}천주 ({bil:.0f}억)")
+            rows_all.sort(key=lambda x: x[3], reverse=True)
+            lines.append(label)
+            for i, (name, mkt, qty, bil) in enumerate(rows_all[:5], 1):
+                lines.append(f"  {i}. [{mkt}] {name}  {qty:.0f}천주 ({bil:.0f}억)")
 
         lines.append("")
 
